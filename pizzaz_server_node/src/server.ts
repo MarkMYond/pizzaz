@@ -365,6 +365,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   }
 
   if (req.method === "GET" && url.pathname === ssePath) {
+    console.log("SSE connection request from:", req.headers.origin || req.headers.host);
     await handleSseRequest(res);
     return;
   }
@@ -379,6 +380,21 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     const fileName = url.pathname.replace("/assets/", "");
     const filePath = join(assetsDir, fileName);
     await serveStaticFile(filePath, res);
+    return;
+  }
+
+  // Root endpoint - health check
+  if (url.pathname === "/" || url.pathname === "") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      status: "ok",
+      service: "Pizzaz MCP Server",
+      endpoints: {
+        mcp: "/mcp",
+        messages: "/mcp/messages",
+        assets: "/assets/*"
+      }
+    }));
     return;
   }
 
