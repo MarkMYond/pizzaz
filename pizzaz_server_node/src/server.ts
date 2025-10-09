@@ -245,14 +245,21 @@ const ssePath = "/mcp";
 const postPath = "/mcp/messages";
 
 async function handleSseRequest(res: ServerResponse) {
+  console.log("SSE connection: Setting up response headers");
   res.setHeader("Access-Control-Allow-Origin", "*");
+  
+  console.log("SSE connection: Creating MCP server");
   const server = createPizzazServer();
+  
+  console.log("SSE connection: Creating SSE transport");
   const transport = new SSEServerTransport(postPath, res);
   const sessionId = transport.sessionId;
 
+  console.log(`SSE connection: Session ID ${sessionId}`);
   sessions.set(sessionId, { server, transport });
 
   transport.onclose = async () => {
+    console.log(`SSE connection closed: Session ${sessionId}`);
     sessions.delete(sessionId);
     await server.close();
   };
@@ -262,7 +269,9 @@ async function handleSseRequest(res: ServerResponse) {
   };
 
   try {
+    console.log(`SSE connection: Connecting server to transport for session ${sessionId}`);
     await server.connect(transport);
+    console.log(`SSE connection: Successfully connected session ${sessionId}`);
   } catch (error) {
     sessions.delete(sessionId);
     console.error("Failed to start SSE session", error);
@@ -281,7 +290,10 @@ async function handlePostMessage(
   res.setHeader("Access-Control-Allow-Headers", "content-type");
   const sessionId = url.searchParams.get("sessionId");
 
+  console.log(`POST message received for session: ${sessionId}`);
+
   if (!sessionId) {
+    console.error("POST message missing sessionId");
     res.writeHead(400).end("Missing sessionId query parameter");
     return;
   }
@@ -289,18 +301,13 @@ async function handlePostMessage(
   const session = sessions.get(sessionId);
 
   if (!session) {
-    res.writeHead(404).end("Unknown session");
+    console.error(`POST message: Session ${sessionId} not found`);
+    res.writeHead(404).end("Session not found");
     return;
   }
 
-  try {
-    await session.transport.handlePostMessage(req, res);
-  } catch (error) {
-    console.error("Failed to process message", error);
-    if (!res.headersSent) {
-      res.writeHead(500).end("Failed to process message");
-    }
-  }
+  console.log(`POST message: Processing for session ${sessionId}`);
+  await session.transport.handlePostMessage(req, res);
 }
 
 const portEnv = Number(process.env.PORT ?? 8000);
