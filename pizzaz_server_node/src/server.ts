@@ -376,8 +376,24 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     return;
   }
 
+  // Handle new Streamable HTTP protocol: POST to /mcp
+  if (req.method === "POST" && url.pathname === ssePath) {
+    console.log("Streamable HTTP POST request to /mcp from:", req.headers.origin || req.headers.host);
+    // Check Accept header to determine if client wants SSE or JSON
+    const accept = req.headers.accept || "";
+    if (accept.includes("text/event-stream")) {
+      // Client wants SSE stream - handle the initialize request and start streaming
+      await handleSseRequest(res);
+    } else {
+      // Client wants JSON response (less common)
+      await handleSseRequest(res);
+    }
+    return;
+  }
+
+  // Handle old HTTP+SSE protocol: GET to /mcp
   if (req.method === "GET" && url.pathname === ssePath) {
-    console.log("SSE connection request from:", req.headers.origin || req.headers.host);
+    console.log("Legacy SSE (GET) connection request from:", req.headers.origin || req.headers.host);
     await handleSseRequest(res);
     return;
   }
