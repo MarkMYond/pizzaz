@@ -390,8 +390,8 @@ httpServer.on("clientError", (err: Error, socket) => {
   socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
 });
 
-httpServer.listen(port, () => {
-  console.log(`Pizzaz MCP server listening on http://localhost:${port}`);
-  console.log(`  SSE stream: GET http://localhost:${port}${ssePath}`);
-  console.log(`  Message post endpoint: POST http://localhost:${port}${postPath}?sessionId=...`);
+httpServer.listen(port, "0.0.0.0", () => {
+  console.log(`Pizzaz MCP server listening on http://0.0.0.0:${port}`);
+  console.log(`  SSE stream: GET http://0.0.0.0:${port}${ssePath}`);
+  console.log(`  Message post endpoint: POST http://0.0.0.0:${port}${postPath}?sessionId=...`);
 });
