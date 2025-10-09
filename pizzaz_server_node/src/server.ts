@@ -245,13 +245,16 @@ const ssePath = "/mcp";
 const postPath = "/mcp/messages";
 
 async function handleSseRequest(res: ServerResponse) {
-  console.log("SSE connection: Setting up response headers");
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  console.log("SSE connection: Starting SSE request handler");
+  
+  // Set critical headers before transport takes over
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no"); // Disable nginx/proxy buffering
   
   console.log("SSE connection: Creating MCP server");
   const server = createPizzazServer();
   
-  console.log("SSE connection: Creating SSE transport");
+  console.log("SSE connection: Creating SSE transport (this will set SSE headers)");
   const transport = new SSEServerTransport(postPath, res);
   const sessionId = transport.sessionId;
 
@@ -360,6 +363,8 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   }
 
   const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+  
+  console.log(`${req.method} ${url.pathname} from ${req.headers.origin || req.headers.host}`);
 
   if (req.method === "OPTIONS" && (url.pathname === ssePath || url.pathname === postPath)) {
     res.writeHead(204, {
@@ -412,6 +417,11 @@ httpServer.on("clientError", (err: Error, socket) => {
   console.error("HTTP client error", err);
   socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
 });
+
+// Set longer timeout for SSE connections
+httpServer.timeout = 0; // Disable timeout for SSE
+httpServer.keepAliveTimeout = 0;
+httpServer.headersTimeout = 0;
 
 httpServer.listen(port, "0.0.0.0", () => {
   console.log(`Pizzaz MCP server listening on http://0.0.0.0:${port}`);
