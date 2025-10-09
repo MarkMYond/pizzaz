@@ -1,0 +1,8 @@
+
+> pizzaz-mcp-node@0.1.0 start /Users/merry/Documents/projects/Sandpit/Pizzaz/pizzaz_server_node
+> tsx src/server.ts
+
+Pizzaz MCP server listening on http://localhost:8000
+  SSE stream: GET http://localhost:8000/mcp
+  Message post endpoint: POST http://localhost:8000/mcp/messages?sessionId=...
+ ELIFECYCLE  Command failed with exit code 143.
