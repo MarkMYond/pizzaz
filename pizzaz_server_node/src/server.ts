@@ -247,7 +247,8 @@ const postPath = "/mcp/messages";
 async function handleSseRequest(res: ServerResponse) {
   console.log("SSE connection: Starting SSE request handler");
   
-  // Set critical headers before transport takes over
+  // Set CORS and connection headers before transport takes over
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no"); // Disable nginx/proxy buffering
   
