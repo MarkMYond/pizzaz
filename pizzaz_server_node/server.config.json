@@ -1,0 +1,11 @@
+{
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "name": "Pizzaz MCP Server",
+      "description": "Local MCP server for Pizzaz project"
+    }
+  ],
+  "tools": [],
+  "resources": []
+}
