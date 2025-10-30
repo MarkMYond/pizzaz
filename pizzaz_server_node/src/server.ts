@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { queryGlampsites } from "./db.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
@@ -33,14 +34,16 @@ type PizzazWidget = {
   responseText: string;
 };
 
-function widgetMeta(widget: PizzazWidget) {
-  return {
+function widgetMeta(widget: PizzazWidget, structuredContent?: any) {
+  const meta: Record<string, any> = {
     "openai/outputTemplate": widget.templateUri,
     "openai/toolInvocation/invoking": widget.invoking,
     "openai/toolInvocation/invoked": widget.invoked,
     "openai/widgetAccessible": true,
     "openai/resultCanProduceWidget": true
-  } as const;
+  };
+  
+  return meta;
 }
 
 // Get base URL for assets from environment or use relative path
@@ -55,7 +58,7 @@ function getBaseUrl(req: IncomingMessage): string {
 }
 
 // Function to generate widget HTML with dynamic asset URLs
-function generateWidgetHtml(widgetType: string, baseUrl: string): string {
+function generateWidgetHtml(widgetType: string, baseUrl: string, data?: any): string {
   const assetsUrl = `${baseUrl}/assets`;
   
   switch (widgetType) {
@@ -93,7 +96,21 @@ function generateWidgetHtml(widgetType: string, baseUrl: string): string {
 <link rel="stylesheet" href="${assetsUrl}/todo-2d2b.css">
 <script type="module" src="${assetsUrl}/todo-2d2b.js"></script>
       `.trim();
-    
+
+    case "glampsite-search":
+      return `
+<div id="glampsite-carousel-root" style="min-height: 400px;"></div>
+<link rel="stylesheet" href="${assetsUrl}/glampsite-carousel-2d2b.css">
+<script type="module" src="${assetsUrl}/glampsite-carousel-2d2b.js"></script>
+      `.trim();
+
+    case "glampskele-carousel":
+      return `
+<div id="root" style="min-height: 400px;"></div>
+<link rel="stylesheet" href="${assetsUrl}/glampskele-carousel-2d2b.css">
+<script type="module" src="${assetsUrl}/glampskele-carousel-2d2b.js"></script>
+      `.trim();
+
     default:
       return `<div>Widget not found</div>`;
   }
@@ -105,45 +122,63 @@ const widgets: PizzazWidget[] = [
     title: "Show Pizza Map",
     templateUri: "ui://widget/pizza-map.html",
     invoking: "Hand-tossing a map",
-    invoked: "Served a fresh map",
+    invoked: "Take a look",
     html: "", // Will be generated dynamically
-    responseText: "Rendered a pizza map!"
+    responseText: "Take a look and ask anything"
   },
   {
     id: "pizza-carousel",
     title: "Show Pizza Carousel",
     templateUri: "ui://widget/pizza-carousel.html",
-    invoking: "Carousel some spots",
-    invoked: "Served a fresh carousel",
+    invoking: "Finding pizza spots",
+    invoked: "Take a look",
     html: "", // Will be generated dynamically
-    responseText: "Rendered a pizza carousel!"
+    responseText: "Take a look and ask anything"
   },
   {
     id: "pizza-albums",
     title: "Show Pizza Album",
     templateUri: "ui://widget/pizza-albums.html",
-    invoking: "Hand-tossing an album",
-    invoked: "Served a fresh album",
+    invoking: "Finding albums",
+    invoked: "Take a look",
     html: "", // Will be generated dynamically
-    responseText: "Rendered a pizza album!"
+    responseText: "Take a look and ask anything"
   },
   {
     id: "pizza-list",
     title: "Show Pizza List",
     templateUri: "ui://widget/pizza-list.html",
-    invoking: "Hand-tossing a list",
-    invoked: "Served a fresh list",
+    invoking: "Finding pizza places",
+    invoked: "Take a look",
     html: "", // Will be generated dynamically
-    responseText: "Rendered a pizza list!"
+    responseText: "Take a look and ask anything"
   },
   {
     id: "todo",
     title: "Show Todo",
     templateUri: "ui://widget/todo.html",
-    invoking: "Hand-tossing a todo",
-    invoked: "Served a fresh todo",
+    invoking: "Creating todo",
+    invoked: "Take a look",
     html: "", // Will be generated dynamically
-    responseText: "Rendered a todo!"
+    responseText: "Take a look and ask anything"
+  },
+  {
+    id: "glampsite-search",
+    title: "Search Glamping Sites",
+    templateUri: "ui://widget/glampsite-carousel.html",
+    invoking: "Finding glampsites",
+    invoked: "Glampsite booking tool",
+    html: "", // Will be generated dynamically
+    responseText: "Take a look and ask anything"
+  },
+  {
+    id: "glampskele-carousel",
+    title: "Glampsite Skeleton Carousel",
+    templateUri: "ui://widget/glampskele-carousel.html",
+    invoking: "Finding glampsites",
+    invoked: "Here are some glampsites",
+    html: "", // Will be generated dynamically
+    responseText: "Here are some glampsites"
   }
 ];
 
@@ -161,6 +196,14 @@ const toolInputSchema = {
     pizzaTopping: {
       type: "string",
       description: "Topping to mention when rendering the widget."
+    },
+    caption: {
+      type: "string",
+      description: "Use a brief, friendly message. and do not repeat a list of items from the data, that is for UI hydration"
+    },
+    no_prose: {
+      type: "boolean",
+      description: "Set to true to suppress additional narrative. ALWAYS set this to true to prevent verbose output."
     }
   },
   required: ["pizzaTopping"],
@@ -168,16 +211,47 @@ const toolInputSchema = {
 } as const;
 
 const toolInputParser = z.object({
-  pizzaTopping: z.string()
+  pizzaTopping: z.string(),
+  caption: z.string().optional(),
+  no_prose: z.boolean().optional()
 });
 
-const tools: Tool[] = widgets.map((widget) => ({
-  name: widget.id,
-  description: widget.title,
-  inputSchema: toolInputSchema,
-  title: widget.title,
-  _meta: widgetMeta(widget)
-}));
+// Schema for the data fetching tool
+const fetchDataInputSchema = {
+  type: "object",
+  properties: {
+    region: {
+      type: "string",
+      description: "Region to fetch glampsite data for"
+    }
+  },
+  required: ["region"],
+  additionalProperties: false
+} as const;
+
+const fetchDataInputParser = z.object({
+  region: z.string()
+});
+
+const tools: Tool[] = [
+  ...widgets.map((widget) => ({
+    name: widget.id,
+    description: `${widget.title}. IMPORTANT: Always set no_prose=true and provide a caption to control output text.`,
+    inputSchema: toolInputSchema,
+    title: widget.title,
+    _meta: widgetMeta(widget)
+  })),
+  // Add data-fetching tool that can be called by widgets
+  {
+    name: "fetch-glampsite-data",
+    description: "Fetch glampsite data for a specific region. This tool can be called by widgets to load data.",
+    inputSchema: fetchDataInputSchema,
+    title: "Fetch Glampsite Data",
+    _meta: {
+      "openai/canBeInitiatedByComponent": true  // Allow widgets to call this
+    }
+  }
+];
 
 const resources: Resource[] = widgets.map((widget) => ({
   uri: widget.templateUri,
@@ -220,8 +294,14 @@ function createPizzazServer(): Server {
       throw new Error(`Unknown resource: ${request.params.uri}`);
     }
 
-    // For SSE, use a default localhost URL (will be updated in tool calls)
-    const defaultHtml = generateWidgetHtml(widget.id, "http://localhost:8000");
+    // Use the production URL for Fly.io deployment
+    const productionUrl = process.env.FLY_APP_NAME 
+      ? `https://${process.env.FLY_APP_NAME}.fly.dev`
+      : "https://pizzaz-mcp.fly.dev";
+    
+    const defaultHtml = generateWidgetHtml(widget.id, productionUrl);
+    
+    console.log(`📄 Serving widget HTML for ${widget.id} with URL: ${productionUrl}`);
 
     return {
       contents: [
@@ -342,6 +422,55 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
         const toolName = request.params?.name;
         const toolArgs = request.params?.arguments || {};
         
+        // Handle data-fetching tool separately
+        if (toolName === "fetch-glampsite-data") {
+          console.log(`\n🔧 Data fetch tool called`);
+          const fetchArgs = fetchDataInputParser.parse(toolArgs);
+          console.log(`📦 Fetching data for region:`, fetchArgs.region);
+          
+          try {
+            const dbResults = await queryGlampsites(fetchArgs.region);
+            console.log(`📊 DB returned ${dbResults.length} sites`);
+            
+            const places = dbResults.map(site => ({
+              id: site._id?.toString() || site.id || 'unknown',
+              name: site.name,
+              coords: site.location?.coordinates || [0, 0],
+              description: site.description || '',
+              city: site.region || site.city || 'UK',
+              rating: site.rating || 4.5,
+              price: site.priceRange || '$$',
+              thumbnail: site.images?.[0] || site.thumbnail || 'https://picsum.photos/400/400'
+            }));
+            
+            response = {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                content: [{
+                  type: "text",
+                  text: `Fetched ${places.length} glampsites`
+                }],
+                structuredContent: { places }
+              }
+            };
+          } catch (error) {
+            console.error('Data fetch error:', error);
+            response = {
+              jsonrpc: "2.0",
+              id: request.id,
+              error: {
+                code: -32603,
+                message: String(error)
+              }
+            };
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(response));
+          return;
+        }
+        
+        // Handle regular widget tools
         const widget = widgetsById.get(toolName);
         if (!widget) {
           throw new Error(`Unknown tool: ${toolName}`);
@@ -349,10 +478,49 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
 
         const args = toolInputParser.parse(toolArgs);
 
+        // Use caption and no_prose from request - these control ChatGPT's display behavior
+        const caption = args.caption ?? "";
+        const no_prose = args.no_prose ?? true;
+
         // Generate appropriate structured content based on widget type
         let structuredContent;
-        
-        if (toolName === "pizza-list") {
+
+        // LOG which tool was called
+        console.log(`\n🔧 Tool called: ${toolName}`);
+        console.log(`📦 Args:`, JSON.stringify(args, null, 2));
+        console.log(`📝 Caption: "${caption}", no_prose: ${no_prose}`);
+
+        if (toolName === "glampsite-search") {
+          console.log(`✅ glampsite-search executing...`);
+          const searchQuery = args.pizzaTopping;
+          console.log(`🔍 Querying glampsites for: ${searchQuery}`);
+          
+          try {
+            const dbResults = await queryGlampsites(searchQuery);
+            console.log(`📊 DB returned ${dbResults.length} sites`);
+            
+            // Return data immediately with _loading: false
+            structuredContent = {
+              places: dbResults.map(site => ({
+                id: site._id?.toString() || site.id || 'unknown',
+                name: site.name,
+                thumbnail: site.images?.[0] || site.thumbnail || 'https://picsum.photos/400/300',
+                location: site.region || site.city || 'UK',
+                rating: site.rating || 4.5,
+                description: site.description || ''
+              })),
+              _loading: false
+            };
+            console.log(`🏕️ Returning ${structuredContent.places.length} glampsites with _loading: false`);
+          } catch (error) {
+            console.error('❌ Error querying glampsites:', error);
+            structuredContent = {
+              places: [],
+              _loading: false
+            };
+          }
+          
+        } else if (toolName === "pizza-list") {
           // Pizza list expects an array of places/items
           const toppings = args.pizzaTopping.split(',').map(t => t.trim()).filter(Boolean);
           structuredContent = {
@@ -405,6 +573,17 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
               specialty: `${topping} Pizza`
             }))
           };
+        } else if (toolName === "glampskele-carousel") {
+          // Glampskele-carousel - return empty places immediately for instant skeletons
+          // Widget always starts with 5 skeleton cards
+          console.log(`✅ glampskele-carousel executing (instant widget with skeletons)...`);
+          const searchQuery = args.pizzaTopping;
+          
+          // Return empty places array immediately - skeletons will show
+          structuredContent = {
+            places: []
+          };
+          console.log(`🏕️ Widget ready with skeletons, search: ${searchQuery}`);
         } else {
           // Default structured content for other widgets
           structuredContent = {
@@ -419,6 +598,7 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
         const baseUrl = getBaseUrl(req);
         const dynamicHtml = generateWidgetHtml(toolName, baseUrl);
 
+        // Add caption and no_prose to suppress ChatGPT verbosity
         const result = {
           content: [
             {
@@ -427,7 +607,9 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
             }
           ],
           structuredContent: structuredContent,
-          _meta: widgetMeta(widget)
+          caption: caption || "",           // Use provided caption or empty string
+          no_prose: no_prose ?? true,       // Default to true to suppress verbose output
+          _meta: widgetMeta(widget, null)
         };
 
         response = {
@@ -698,6 +880,39 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     const fileName = url.pathname.replace("/assets/", "");
     const filePath = join(assetsDir, fileName);
     await serveStaticFile(filePath, res);
+    return;
+  }
+
+  // API endpoint for fetching glampsite data
+  if (req.method === "GET" && url.pathname === "/api/glampsites") {
+    const region = url.searchParams.get("region") || "UK";
+    console.log(`🔍 API request for glampsites in region: ${region}`);
+    
+    try {
+      const dbResults = await queryGlampsites(region);
+      console.log(`📊 API returned ${dbResults.length} sites`);
+      
+      const places = dbResults.map(site => ({
+        id: site._id?.toString() || site.id || 'unknown',
+        name: site.name,
+        coords: site.location?.coordinates || [0, 0],
+        description: site.description || '',
+        city: site.region || site.city || 'UK',
+        rating: site.rating || 4.5,
+        price: site.priceRange || '$$',
+        thumbnail: site.images?.[0] || site.thumbnail || 'https://picsum.photos/400/400'
+      }));
+      
+      res.writeHead(200, { 
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*"
+      });
+      res.end(JSON.stringify({ places }));
+    } catch (error) {
+      console.error('API error:', error);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to fetch glampsites" }));
+    }
     return;
   }
 

@@ -2,11 +2,42 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import useEmblaCarousel from "embla-carousel-react";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import markers from "../pizzaz/markers.json";
+import { useWidgetProps } from "../use-widget-props";
 import PlaceCard from "./PlaceCard";
 
 function App() {
-  const places = markers?.places || [];
+  const [directData, setDirectData] = React.useState(null);
+  
+  // Check immediately for data on mount
+  React.useEffect(() => {
+    // Check immediately
+    if (window.openai?.toolOutput) {
+      setDirectData(window.openai.toolOutput);
+    }
+    
+    // Poll for data if not immediately available
+    let checks = 0;
+    const interval = setInterval(() => {
+      checks++;
+      
+      if (window.openai?.toolOutput) {
+        setDirectData(window.openai.toolOutput);
+        clearInterval(interval);
+      }
+      
+      if (checks > 50) { // Stop after 5 seconds
+        clearInterval(interval);
+      }
+    }, 100);
+    
+    return () => clearInterval(interval);
+  }, []);
+  
+  // Use direct data if available, otherwise fall back to hook
+  const hookData = useWidgetProps({ places: [] });
+  const data = directData || hookData;
+  const places = data?.places || [];
+  
   const [emblaRef, emblaApi] = useEmblaCarousel({
     align: "center",
     loop: false,
